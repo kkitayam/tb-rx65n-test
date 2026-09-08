@@ -102,25 +102,27 @@ static void pe_exit_ram(void)
         ;
 }
 
-/* Return 0 if all bytes are 0xFF, 1 if not. Uses RX SWHILE.B. */
 /*
  * SWHILE.B (RX software manual):
  *   R1 = start address (updated)
  *   R2 = compare value (0xFF)
  *   R3 = count (updated; 0 means ignored / all matched)
  */
-static int mem_is_blank(const void *addr, size_t nbytes)
+static bool mem_is_blank(const void *addr, size_t nbytes)
 {
+    bool result;
     register uint32_t ptr __asm__("r1") = (uint32_t)(uintptr_t)addr;
     register uint32_t cmp __asm__("r2") = 0xFFu;
     register uint32_t cnt __asm__("r3") = (uint32_t)nbytes;
     __asm volatile (
-        "swhile.b"
-        : "+r"(ptr), "+r"(cnt)
+        "setpsw Z\n\t"
+        "swhile.b\n\t"
+        "sceq.l %0"
+        : "=r"(result),"+r"(ptr), "+r"(cnt)
         : "r"(cmp), "m"(*(const uint8_t (*)[nbytes])addr)
         : "cc"
     );
-    return (cnt == 0u) ? 0 : 1;
+    return result;
 }
 
 /* ---------- DF write (XIP) ---------- */
@@ -337,7 +339,7 @@ bool flash_type4_is_blank(uintptr_t address, size_t size)
     }
 
     if (address >= CF_START && (address + size - 1) <= CF_END)
-        return mem_is_blank((const void *)address, size) == 0;
+        return mem_is_blank((const void *)address, size);
 
     return false;
 }
