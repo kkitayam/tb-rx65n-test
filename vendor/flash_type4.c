@@ -11,6 +11,7 @@
  */
 #include "flash_type4.h"
 #include "iodefine.h"
+#include <string.h>
 
 /* ---------- constants (RX65N 2 MiB CF / 32 KiB DF) ---------- */
 #define CF_START          (0xFFE00000u)
@@ -22,6 +23,9 @@
 #define DF_END            (0x00107FFFu)
 #define DF_BLOCK_SIZE     (64u)
 #define DF_WRITE_UNIT     (4u)
+
+#define CONFIGFLASH_ADDR_OFFSET (0xFD800000u)
+#define CONFIG_BANKSEL_ADDR (0xFE7F5D20u)
 
 #define FACI_CMD_PROGRAM      (0xE8u)
 #define FACI_CMD_ERASE        (0x20u)
@@ -128,8 +132,9 @@ static bool mem_is_blank(const void *addr, size_t nbytes)
 /* ---------- DF write (XIP) ---------- */
 static int df_write(uintptr_t addr, const uint8_t *src, size_t size)
 {
-    if (pe_enter_df() != 0)
-        return FLASH_TYPE4_ERR_FAILURE;
+    int err;
+    err = pe_enter_df();
+    if (err) return err;
 
     int rc = 0;
     for (size_t done = 0; rc == 0 && done < size; ) {
@@ -157,8 +162,9 @@ static int df_write(uintptr_t addr, const uint8_t *src, size_t size)
 FLASH_TYPE4_PE_RAM_ATTR
 static int cf_write(uintptr_t addr, const uint8_t *src, size_t size)
 {
-    if (pe_enter_cf() != 0)
-        return FLASH_TYPE4_ERR_FAILURE;
+    int err;
+    err = pe_enter_cf();
+    if (err) return err;
 
     int rc = 0;
     for (size_t done = 0; rc == 0 && done < size; ) {
@@ -185,8 +191,9 @@ static int cf_write(uintptr_t addr, const uint8_t *src, size_t size)
 /* ---------- erase: start/end already block-aligned by caller ---------- */
 static int df_erase(uintptr_t start, uintptr_t end)
 {
-    if (pe_enter_df() != 0)
-        return FLASH_TYPE4_ERR_FAILURE;
+    int err;
+    err = pe_enter_df();
+    if (err) return err;
 
     int rc = 0;
     for (; rc == 0 && start < end; start += DF_BLOCK_SIZE) {
@@ -202,8 +209,9 @@ static int df_erase(uintptr_t start, uintptr_t end)
 FLASH_TYPE4_PE_RAM_ATTR
 static int cf_erase(uintptr_t start, uintptr_t end)
 {
-    if (pe_enter_cf() != 0)
-        return FLASH_TYPE4_ERR_FAILURE;
+    int err;
+    err = pe_enter_cf();
+    if (err) return err;
 
     int rc = 0;
     for (; rc == 0 && start < end; start += CF_BLOCK_SIZE) {
@@ -239,12 +247,16 @@ static bool df_is_blank_hw(uintptr_t start, uintptr_t end)
 
 /* Configuration set (CF P/E mode, 16-byte unit) */
 FLASH_TYPE4_PE_RAM_ATTR
-static int cf_config_set(uintptr_t fsaddr, const uint16_t *words)
+static int cf_config_set(uintptr_t addr, const uint16_t words[8])
 {
-    if (pe_enter_cf() != 0)
-        return FLASH_TYPE4_ERR_FAILURE;
+    int err;
 
-    FLASH.FSADDR.LONG = (uint32_t)fsaddr;
+    err = pe_enter_cf();
+    if (err) return FLASH_TYPE4_ERR_FAILURE;
+
+    const uint32_t fsaddr = ((uint32_t)addr - CONFIGFLASH_ADDR_OFFSET) & ~(sizeof(uint16_t) * FACI_CONFIG_WORDS - 1);
+
+    FLASH.FSADDR.LONG = fsaddr;
     FACI_CMD_AREA.BYTE = FACI_CMD_CONFIG;
     FACI_CMD_AREA.BYTE = (uint8_t)FACI_CONFIG_WORDS;
 
@@ -344,9 +356,21 @@ bool flash_type4_is_blank(uintptr_t address, size_t size)
     return false;
 }
 
-int flash_type4_config_set(uintptr_t address, const void *data)
+int flash_type4_swap_bank(void)
 {
-    if (data == 0)
-        return FLASH_TYPE4_ERR_PARAM;
-    return cf_config_set(address, (const uint16_t *)data);
+    union ConfigData {
+        uint32_t LONGS[4];
+        uint16_t WORDS[8];
+    };
+    uint32_t mde = OFSM.MDE.LONG;
+    if (mde & 0x70) {
+        /* if linear mode is set, switch into dual mode to enable bank swap. */
+        const union ConfigData opts = { .LONGS = { mde & ~0x70, OFSM.OFS0.LONG, OFSM.OFS1.LONG, 0xFFFFFFFF} };
+        int err;
+        err = cf_config_set((uintptr_t)&OFSM.MDE, opts.WORDS);
+        if (err) return FLASH_TYPE4_ERR_FAILURE;
+    }
+    const uint32_t bankswp = OFSM.BANKSEL.BIT.BANKSWP;
+    const union ConfigData banksel = { .LONGS = { bankswp ^ 7, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF } };
+    return cf_config_set((uintptr_t)&OFSM.BANKSEL, banksel.WORDS);
 }

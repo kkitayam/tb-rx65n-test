@@ -2,6 +2,7 @@ MEMORY
 {
 	RAM  : ORIGIN = 0x4,        LENGTH = 0x3fffc
 	DROM : ORIGIN = 0x00100000, LENGTH = 0x8000
+	OFSM : ORIGIN = 0xFE7F5D00, LENGTH = 0x80
 	PROM : ORIGIN = 0xFFE00000, LENGTH = 0x200000
 }
 
@@ -81,18 +82,6 @@ SECTIONS
 		__end = .;
 	} > RAM
 
-	.mde VECTOR_BASE + 0x0:
-	{
-		KEEP(*(.mde))
-	} > PROM = 0xFF
-	.ofs1 VECTOR_BASE + 0x8:
-	{
-		KEEP(*(.ofs1))
-	} > PROM = 0xFF
-	.ofs0 VECTOR_BASE + 0xC:
-	{
-		KEEP(*(.ofs0))
-	} > PROM = 0xFF
 	.fixed_vector VECTOR_BASE + 0x50:
 	{
 		LONG(_PrivilegedInst_Handler) /* 0xFFFFFFD0 */

@@ -41,13 +41,8 @@ int flash_type4_erase(uintptr_t address, size_t size);
  * DF: always HW blank check. CF: software (SWHILE.B). */
 bool flash_type4_is_blank(uintptr_t address, size_t size);
 
-/*
- * Configuration set (option-setting memory).
- * address: FSADDR value (e.g. 0x00FF5D00 for OFS0/OFS1/MDE at FE7F5D00).
- * data: 16 bytes (8 x uint16_t words). Must not be NULL.
- * Runs in Code Flash P/E mode. 0 success, negative error.
- */
-int flash_type4_config_set(uintptr_t address, const void *data);
+/* Swap the current flash bank if dual-mode enabled. Returns 0 on success, negative error code on failure. */
+int flash_type4_swap_bank(void);
 
 #ifdef __cplusplus
 }
