@@ -142,59 +142,61 @@ static bool mem_is_blank(const void *addr, size_t nbytes)
 }
 
 /* ---------- DF write (XIP) ---------- */
+/* size is 4-byte multiple; pad short units with 0xFFFF. */
 static int df_write(uintptr_t addr, const uint8_t *src, size_t size)
 {
-    int err;
-    err = pe_enter_df();
-    if (err) return err;
+    if (pe_enter_df() != 0)
+        return FLASH_TYPE4_ERR_FAILURE;
 
     int rc = 0;
-    for (size_t done = 0; rc == 0 && done < size; ) {
-        size_t n = DF_WRITE_UNIT;
-        if (done + n > size)
-            n = size - done;
-
+    for (size_t done = 0; rc == 0 && done < size; done += DF_WRITE_UNIT) {
         FLASH.FSADDR.LONG = (uint32_t)(addr + done);
         FACI_CMD_AREA.BYTE = FACI_CMD_PROGRAM;
-        FACI_CMD_AREA.BYTE = (uint8_t)(n / 2);
+        FACI_CMD_AREA.BYTE = (uint8_t)(DF_WRITE_UNIT / 2);
 
         const uint16_t *p = (const uint16_t *)(src + done);
-        for (size_t i = 0; i < n / 2; i++)
+        size_t words = (size - done > DF_WRITE_UNIT)
+                       ? (DF_WRITE_UNIT / 2)
+                       : ((size - done) / 2);
+        size_t i;
+        for (i = 0; i < words; i++)
             FACI_CMD_AREA.WORD = p[i];
+        for (; i < DF_WRITE_UNIT / 2; i++)
+            FACI_CMD_AREA.WORD = 0xFFFFu;
 
         FACI_CMD_AREA.BYTE = FACI_CMD_END;
         rc = wait_frdy(US_TO_LOOPS(2000));
-        done += n;
     }
     pe_exit();
     return rc;
 }
 
 /* ---------- CF write (RAM section) ---------- */
+/* Always programs full 128 B units; short tail padded with 0xFFFF. */
 FLASH_TYPE4_PE_RAM_ATTR
 static int cf_write(uintptr_t addr, const uint8_t *src, size_t size)
 {
-    int err;
-    err = pe_enter_cf();
-    if (err) return err;
+    if (pe_enter_cf() != 0)
+        return FLASH_TYPE4_ERR_FAILURE;
 
     int rc = 0;
-    for (size_t done = 0; rc == 0 && done < size; ) {
-        size_t n = CF_WRITE_UNIT;
-        if (done + n > size)
-            n = size - done;
-
+    for (size_t done = 0; rc == 0 && done < size; done += CF_WRITE_UNIT) {
         FLASH.FSADDR.LONG = (uint32_t)(addr + done);
         FACI_CMD_AREA.BYTE = FACI_CMD_PROGRAM;
-        FACI_CMD_AREA.BYTE = (uint8_t)(n / 2);
+        FACI_CMD_AREA.BYTE = (uint8_t)(CF_WRITE_UNIT / 2);  /* N = 64 words */
 
         const uint16_t *p = (const uint16_t *)(src + done);
-        for (size_t i = 0; i < n / 2; i++)
+        size_t words = (size - done > CF_WRITE_UNIT)
+                       ? (CF_WRITE_UNIT / 2)
+                       : ((size - done) / 2);
+        size_t i;
+        for (i = 0; i < words; i++)
             FACI_CMD_AREA.WORD = p[i];
+        for (; i < CF_WRITE_UNIT / 2; i++)
+            FACI_CMD_AREA.WORD = 0xFFFFu;
 
         FACI_CMD_AREA.BYTE = FACI_CMD_END;
         rc = wait_frdy_ram(US_TO_LOOPS(5000));
-        done += n;
     }
     pe_exit_ram();
     return rc;
@@ -365,15 +367,19 @@ int flash_type4_write(uintptr_t address, const void *data, size_t size)
 {
     if (data == 0 || size == 0)
         return FLASH_TYPE4_ERR_PARAM;
+    /* size: 4-byte units; short HW program units are padded with 0xFFFF */
+    if ((size & 3u) != 0)
+        return FLASH_TYPE4_ERR_ALIGN;
 
     if (address >= DF_START && (address + size - 1) <= DF_END) {
-        if ((address & (DF_WRITE_UNIT - 1)) != 0 || (size & (DF_WRITE_UNIT - 1)) != 0)
+        if ((address & (DF_WRITE_UNIT - 1)) != 0)
             return FLASH_TYPE4_ERR_ALIGN;
         return df_write(address, (const uint8_t *)data, size);
     }
 
     if (address >= CF_START && (address + size - 1) <= CF_END) {
-        if ((address & (CF_WRITE_UNIT - 1)) != 0 || (size & (CF_WRITE_UNIT - 1)) != 0)
+        /* address still on CF program boundary (128 B) */
+        if ((address & (CF_WRITE_UNIT - 1)) != 0)
             return FLASH_TYPE4_ERR_ALIGN;
         return cf_write(address, (const uint8_t *)data, size);
     }

@@ -31,7 +31,7 @@ extern "C" {
 /* Enable DF access etc. Call once from main. */
 void flash_type4_init(void);
 
-/* CF/DF auto. 0 success, negative error. */
+/* CF/DF auto. size in 4-byte units (short HW units padded 0xFFFF). 0 success, negative error. */
 int flash_type4_write(uintptr_t address, const void *data, size_t size);
 
 /* size floored to erase unit. Returns bytes erased or negative error. */
