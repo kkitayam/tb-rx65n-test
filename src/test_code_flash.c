@@ -19,6 +19,16 @@
 #define CF_TEST_8K_ERASE  (0x2000u)   /* 8 KiB */
 #define CF_TEST_SIZE      (128u)      /* min program unit */
 
+#ifdef PERF
+extern void uart_put_digit(const char* s, uint32_t value);
+extern uint32_t get_cycle_count(void);
+#define PUT_DIGIT(s,v)    uart_put_digit(s,v)
+#define GET_CYCLE_COUNT() get_cycle_count()
+#else
+#define PUT_DIGIT(s,v)
+#define GET_CYCLE_COUNT() 0
+#endif
+
 static uint8_t pattern[CF_TEST_SIZE];
 
 static int cf_region_test(uintptr_t addr, size_t erase_size)
@@ -26,18 +36,35 @@ static int cf_region_test(uintptr_t addr, size_t erase_size)
     for (size_t i = 0; i < CF_TEST_SIZE; i++)
         pattern[i] = (uint8_t)(0x5A ^ (unsigned)i);
 
+    uint32_t beg, end;
+    (void)beg; (void)end;
+    beg = GET_CYCLE_COUNT();
     int erased = flash_type4_erase(addr, erase_size);
+    end = GET_CYCLE_COUNT();
+    PUT_DIGIT("erase: ", end - beg);
     if (erased < 0)
         return -1;
     if ((size_t)erased < erase_size)
         return -2;
-    if (!flash_type4_is_blank(addr, CF_TEST_SIZE))
+    beg = GET_CYCLE_COUNT();
+    int err = flash_type4_is_blank(addr, CF_TEST_SIZE);
+    end = GET_CYCLE_COUNT();
+    PUT_DIGIT("is_blank false: ", end - beg);
+    if (!err)
         return -3;
-    if (flash_type4_write(addr, pattern, CF_TEST_SIZE) != 0)
+    beg = GET_CYCLE_COUNT();
+    err = flash_type4_write(addr, pattern, CF_TEST_SIZE);
+    end = GET_CYCLE_COUNT();
+    PUT_DIGIT("write: ", end - beg);
+    if (err != 0)
         return -4;
     if (memcmp((const void *)addr, pattern, CF_TEST_SIZE) != 0)
         return -5;
-    if (flash_type4_is_blank(addr, CF_TEST_SIZE))
+    beg = GET_CYCLE_COUNT();
+    err = flash_type4_is_blank(addr, CF_TEST_SIZE);
+    end = GET_CYCLE_COUNT();
+    PUT_DIGIT("is_blank true: ", end - beg);
+    if (err)
         return -6;
     return 0;
 }

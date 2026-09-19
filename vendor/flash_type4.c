@@ -203,18 +203,36 @@ static int cf_write(uintptr_t addr, const uint8_t *src, size_t size)
 }
 
 /* ---------- erase: start/end already block-aligned by caller ---------- */
+/* DF blank check while already in DF P/E. true = blank. */
+static bool df_blank_check_pe(uintptr_t start, uintptr_t end)
+{
+    FLASH.FBCCNT.BIT.BCDIR = 0;
+    FLASH.FSADDR.LONG = (uint32_t)start;
+    FLASH.FEADDR.LONG = (uint32_t)(end - 1);
+    FACI_CMD_AREA.BYTE = FACI_CMD_BLANK;
+    FACI_CMD_AREA.BYTE = FACI_CMD_END;
+    if (wait_frdy(US_TO_LOOPS(10000)) != 0)
+        return false;
+    return (FLASH.FBCSTAT.BIT.BCST == 0);
+}
+
+/*
+ * One DF P/E session: blank-check then erase only if needed.
+ * FACI allows consecutive commands without leaving P/E mode.
+ */
 static int df_erase(uintptr_t start, uintptr_t end)
 {
-    int err;
-    err = pe_enter_df();
-    if (err) return err;
+    if (pe_enter_df() != 0)
+        return FLASH_TYPE4_ERR_FAILURE;
 
     int rc = 0;
-    for (; rc == 0 && start < end; start += DF_BLOCK_SIZE) {
-        FLASH.FSADDR.LONG = (uint32_t)start;
-        FACI_CMD_AREA.BYTE = FACI_CMD_ERASE;
-        FACI_CMD_AREA.BYTE = FACI_CMD_END;
-        rc = wait_frdy(US_TO_LOOPS(5000));
+    if (!df_blank_check_pe(start, end)) {
+        for (; rc == 0 && start < end; start += DF_BLOCK_SIZE) {
+            FLASH.FSADDR.LONG = (uint32_t)start;
+            FACI_CMD_AREA.BYTE = FACI_CMD_ERASE;
+            FACI_CMD_AREA.BYTE = FACI_CMD_END;
+            rc = wait_frdy(US_TO_LOOPS(5000));
+        }
     }
     pe_exit();
     return rc;
@@ -258,6 +276,10 @@ static size_t cf_aligned_span(uintptr_t first, uintptr_t last, bool dual)
 FLASH_TYPE4_PE_RAM_ATTR
 static int cf_erase(uintptr_t start, size_t total, bool dual)
 {
+    /* Read mode only: must run before pe_enter_cf. */
+    if (mem_is_blank((const void *)start, total))
+        return 0;
+
     if (pe_enter_cf() != 0)
         return FLASH_TYPE4_ERR_FAILURE;
 
@@ -305,20 +327,9 @@ static bool df_is_blank_hw(uintptr_t start, uintptr_t end)
 {
     if (pe_enter_df() != 0)
         return false;
-
-    FLASH.FBCCNT.BIT.BCDIR = 0;
-    FLASH.FSADDR.LONG = (uint32_t)start;
-    FLASH.FEADDR.LONG = (uint32_t)(end - 1);
-
-    FACI_CMD_AREA.BYTE = FACI_CMD_BLANK;
-    FACI_CMD_AREA.BYTE = FACI_CMD_END;
-
-    int rc = wait_frdy(US_TO_LOOPS(10000));
+    bool blank = df_blank_check_pe(start, end);
     pe_exit();
-
-    if (rc != 0)
-        return false;
-    return (FLASH.FBCSTAT.BIT.BCST == 0);
+    return blank;
 }
 
 /* Configuration set (CF P/E mode, 16-byte unit) */
